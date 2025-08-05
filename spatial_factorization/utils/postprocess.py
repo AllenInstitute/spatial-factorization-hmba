@@ -69,6 +69,25 @@ def interpret_nsf(fit,X,S=10,**kwargs):
   Fhat = t2np(fit.sample_latent_GP_funcs(X,S=S,chol=False)).T #NxL
   return interpret_nonneg(np.exp(Fhat),fit.W.numpy(),**kwargs)
 
+def interpret_nsf_batched(fit, X, S=10, batch_size=1000, **kwargs):
+    """
+    Batched version of interpret_nsf to avoid OOM errors.
+    fit: object of type SF with non-negative factors
+    X: spatial coordinates to predict on (NxD)
+    S: number of samples
+    batch_size: number of rows of X to process at once
+    returns: interpretable loadings W, factors eF, and total counts vector
+    """
+    N = X.shape[0]
+    Fhat_list = []
+    for start in range(0, N, batch_size):
+        end = min(start + batch_size, N)
+        X_batch = X[start:end]
+        Fhat_batch = t2np(fit.sample_latent_GP_funcs(X_batch, S=S, chol=False)).T  # (end-start)xL
+        Fhat_list.append(Fhat_batch)
+    Fhat = np.concatenate(Fhat_list, axis=0)  # NxL
+    return interpret_nonneg(np.exp(Fhat), fit.W.numpy(), **kwargs)
+
 def interpret_fa(fit,S=10):
   H = t2np(fit.sample_latent_factors(S=S))
   return {"factors":H, "loadings":fit.get_loadings()}
