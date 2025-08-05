@@ -45,13 +45,25 @@ class SpatialFactorization(tf.Module):
         Second dimension: 'D' is dimensionality of input to GP.
         More inducing points= slower but more accurate inference.
     lik: likelihood (Poisson or Gaussian)
+    psd_kernel : an object of class PositiveSemidefiniteKernel, must accept a
+        length_scale parameter.
+    nugget : float, optional
+        Nugget parameter for the kernel, added to diagonal of the kernel matrix.
+    length_scale : float or list/array of floats
+        Length scale of the kernel, either a single scalar (isotropic kernel)
+        or a list/array of length D (anisotropic kernel).
     disp: overdispersion parameter initialization.
     --for Gaussian likelihood, the scale (stdev) parameter
     --for negative binomial likelihood, the parameter phi such that
       var=mean+phi*mean^2, i.e. phi->0 corresponds to Poisson, phi=1 to geometric
     --for Poisson likelihood, this parameter is ignored and set to None
-    psd_kernel : an object of class PositiveSemidefiniteKernel, must accept a
-        length_scale parameter.
+    nonneg : boolean, optional
+        If True, the factors are non-negative and the model is a non-negative
+        spatial factorization (NSF). If False, the factors are real-valued and
+        the model is a real-valued spatial factorization (RSF).
+    isotropic : boolean, optional
+        If True, length scale of kernel is the same for all dimensions.
+        If False, length scale of kernel is set & learned separately for each dimension.
     feature_means : if input data is centered (for lik='gau', nonneg=False)
     """
     super().__init__(**kwargs)
@@ -81,11 +93,26 @@ class SpatialFactorization(tf.Module):
       self.amplitude = tv(np.tile(1.0,[L]), tfb.Softplus(), dtype=dtp, name="amplitude")
       self._ls0 = length_scale #store for .reset() method
       if self.isotropic:
+        # sanity check that length_scale is a scalar
+        if not np.isscalar(self._ls0):
+          raise ValueError(
+              f"Isotropic kernel requires that length_scale is a single, scalar value; isntead got {self._ls0}"
+          )
         self.length_scale = tv(np.tile(self._ls0,[L]), tfb.Softplus(),
                                dtype=dtp, name="length_scale")
       else:
-        self.scale_diag = tv(np.tile(np.sqrt(self._ls0),[L,D]),
-                             tfb.Softplus(), dtype=dtp, name="scale_diag")
+        # Not isotropic: must be array/list of length D, i.e. one scalar per dimension of the data passed in
+        ls_array = np.array(self._ls0, dtype=float)
+        if ls_array.ndim != 1 or ls_array.shape[0] != D:
+            raise ValueError(
+                f"Anisotropic kernel requires length_scale to be list/array of length D, i.e. one scalar per dimension of the data passed in; instead got shape {ls_array.shape}"
+            )
+        # Softplus ensures positivity; sqrt to get scale_diag for PSD kernel
+        self.scale_diag = tv(
+            np.tile(np.sqrt(ls_array), (L, 1)),  # shape (L, D)
+            tfb.Softplus(),
+            dtype=dtp, name="scale_diag"
+        )
     #Loadings weights
     if self.nonneg:
       self.W = tf.Variable(rng.exponential(size=(J,L)), dtype=dtp,
